@@ -112,34 +112,107 @@ class GitHubService {
     }
 
     async getPulls(owner, repo) {
-        try {
-            const { data } = await this.client.get(`/repos/${owner}/${repo}/pulls`, {
-                params: { state: 'all' }
-            });
-            return data;
-        } catch (error) {
-            throw new AppError(`Failed to fetch pull requests for ${owner}/${repo}`, 500);
+        const allPulls = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const response = await this.client.get(`/repos/${owner}/${repo}/pulls`, {
+                    params: {
+                        state: 'all',
+                        per_page: 100,
+                        page
+                    }
+                });
+
+                // Check rate limits
+                const rateLimit = response.headers['x-ratelimit-remaining'];
+                if (rateLimit && parseInt(rateLimit) < 10) {
+                    console.warn(`GitHub API rate limit running low: ${rateLimit} requests remaining`);
+                }
+
+                const { data } = response;
+                allPulls.push(...data);
+                hasMore = data.length === 100;
+                page++;
+            } catch (error) {
+                if (error.response && error.response.status === 403 && error.response.headers['x-ratelimit-remaining'] === '0') {
+                    throw new AppError('GitHub API rate limit exceeded. Please try again later.', 429);
+                }
+                throw new AppError(`Failed to fetch pull requests for ${owner}/${repo}`, 500);
+            }
         }
+        return allPulls;
     }
 
     async getIssues(owner, repo) {
-        try {
-            const { data } = await this.client.get(`/repos/${owner}/${repo}/issues`, {
-                params: { state: 'all' }
-            });
-            return data;
-        } catch (error) {
-            throw new AppError(`Failed to fetch issues for ${owner}/${repo}`, 500);
+        const allIssues = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const response = await this.client.get(`/repos/${owner}/${repo}/issues`, {
+                    params: {
+                        state: 'all',
+                        per_page: 100,
+                        page
+                    }
+                });
+
+                // Check rate limits
+                const rateLimit = response.headers['x-ratelimit-remaining'];
+                if (rateLimit && parseInt(rateLimit) < 10) {
+                    console.warn(`GitHub API rate limit running low: ${rateLimit} requests remaining`);
+                }
+
+                const { data } = response;
+                allIssues.push(...data);
+                hasMore = data.length === 100;
+                page++;
+            } catch (error) {
+                if (error.response && error.response.status === 403 && error.response.headers['x-ratelimit-remaining'] === '0') {
+                    throw new AppError('GitHub API rate limit exceeded. Please try again later.', 429);
+                }
+                throw new AppError(`Failed to fetch issues for ${owner}/${repo}`, 500);
+            }
         }
+        return allIssues;
     }
 
     async getChangelogs(owner, repo) {
-        try {
-            const { data } = await this.client.get(`/repos/${owner}/${repo}/releases`);
-            return data;
-        } catch (error) {
-            throw new AppError(`Failed to fetch changelogs for ${owner}/${repo}`, 500);
+        const allReleases = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const response = await this.client.get(`/repos/${owner}/${repo}/releases`, {
+                    params: {
+                        per_page: 100,
+                        page
+                    }
+                });
+
+                // Check rate limits
+                const rateLimit = response.headers['x-ratelimit-remaining'];
+                if (rateLimit && parseInt(rateLimit) < 10) {
+                    console.warn(`GitHub API rate limit running low: ${rateLimit} requests remaining`);
+                }
+
+                const { data } = response;
+                allReleases.push(...data);
+                hasMore = data.length === 100;
+                page++;
+            } catch (error) {
+                if (error.response && error.response.status === 403 && error.response.headers['x-ratelimit-remaining'] === '0') {
+                    throw new AppError('GitHub API rate limit exceeded. Please try again later.', 429);
+                }
+                throw new AppError(`Failed to fetch releases for ${owner}/${repo}`, 500);
+            }
         }
+        return allReleases;
     }
 }
 

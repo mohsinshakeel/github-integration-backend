@@ -21,4 +21,7 @@ router.get('/integration/current/organizations', currentController.getCurrentOrg
 // Individual repository sync
 router.post('/integration/current/repository/:id/sync', currentController.syncCurrentRepository);
 
+// Collection query with URL parameters to get the data from a particular collection
+router.get('/github/collections/:collection/query', currentController.queryCollection);
+
 module.exports = router; 

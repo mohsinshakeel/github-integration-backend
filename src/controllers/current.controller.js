@@ -4,6 +4,9 @@ const Repository = require("../models/Repository");
 const GitHubService = require("../services/github.service");
 const { AppError } = require("../middleware/errorHandler");
 const Commit = require("../models/Commit");
+const PullRequest = require("../models/PullRequest");
+const Issue = require("../models/Issue");
+const Release = require("../models/Release");
 
 // Get current integration (most recent one)
 const getCurrentIntegration = async (accessToken) => {
@@ -154,6 +157,197 @@ exports.initializeIntegration = async (req, res, next) => {
             console.log(
               `✅ Saved repository: ${savedRepo.name} (${repoType}) with ID: ${savedRepo._id}`
             );
+
+            // Fetch and save repository data
+            try {
+              const [owner, repoName] = savedRepo.fullName.split('/');
+              console.log(`Fetching data for ${savedRepo.fullName}...`);
+
+              // Fetch and save commits
+              console.log(`  Fetching commits...`);
+              const commits = (await github.getCommits(owner, repoName)).slice(0, 10);
+              console.log(`  Found ${commits.length} commits`);
+
+              for (const commitData of commits) {
+                await Commit.findOneAndUpdate(
+                  { sha: commitData.sha },
+                  {
+                    sha: commitData.sha,
+                    repositoryId: savedRepo._id,
+                    message: commitData.commit.message,
+                    author: {
+                      name: commitData.commit.author.name,
+                      email: commitData.commit.author.email,
+                      login: commitData.author?.login,
+                      avatarUrl: commitData.author?.avatar_url
+                    },
+                    committer: {
+                      name: commitData.commit.committer.name,
+                      email: commitData.commit.committer.email,
+                      login: commitData.committer?.login,
+                      avatarUrl: commitData.committer?.avatar_url
+                    },
+                    date: new Date(commitData.commit.author.date),
+                    url: commitData.html_url,
+                    stats: commitData.stats || { additions: 0, deletions: 0, total: 0 }
+                  },
+                  { upsert: true, new: true }
+                );
+              }
+              console.log(`  ✅ Saved ${commits.length} commits`);
+
+              // Fetch and save pull requests
+              console.log(`  Fetching pull requests...`);
+              const pulls = (await github.getPulls(owner, repoName)).slice(0, 10);
+              console.log(`  Found ${pulls.length} pull requests`);
+
+              for (const pullData of pulls) {
+                await PullRequest.findOneAndUpdate(
+                  { repositoryId: savedRepo._id, prId: pullData.id },
+                  {
+                    prId: pullData.id,
+                    repositoryId: savedRepo._id,
+                    number: pullData.number,
+                    title: pullData.title,
+                    body: pullData.body,
+                    state: pullData.state,
+                    user: {
+                      login: pullData.user.login,
+                      avatarUrl: pullData.user.avatar_url,
+                      url: pullData.user.html_url
+                    },
+                    createdAt: new Date(pullData.created_at),
+                    updatedAt: pullData.updated_at ? new Date(pullData.updated_at) : null,
+                    closedAt: pullData.closed_at ? new Date(pullData.closed_at) : null,
+                    mergedAt: pullData.merged_at ? new Date(pullData.merged_at) : null,
+                    url: pullData.url,
+                    htmlUrl: pullData.html_url,
+                    labels: pullData.labels.map(label => ({
+                      name: label.name,
+                      color: label.color,
+                      description: label.description
+                    })),
+                    assignees: pullData.assignees.map(assignee => ({
+                      login: assignee.login,
+                      avatarUrl: assignee.avatar_url
+                    })),
+                    requestedReviewers: pullData.requested_reviewers.map(reviewer => ({
+                      login: reviewer.login,
+                      avatarUrl: reviewer.avatar_url
+                    }))
+                  },
+                  { upsert: true, new: true }
+                );
+              }
+              console.log(`  ✅ Saved ${pulls.length} pull requests`);
+
+              // Fetch and save issues
+              console.log(`  Fetching issues...`);
+              const issues = (await github.getIssues(owner, repoName)).slice(0, 10);
+              console.log(`  Found ${issues.length} total issues`);
+
+              // Filter out pull requests (GitHub API returns PRs as issues)
+              const actualIssues = issues.filter(issue => !issue.pull_request);
+              console.log(`  Filtered to ${actualIssues.length} actual issues (excluding PRs)`);
+
+              for (const issueData of actualIssues) {
+                await Issue.findOneAndUpdate(
+                  { repositoryId: savedRepo._id, issueId: issueData.id },
+                  {
+                    issueId: issueData.id,
+                    repositoryId: savedRepo._id,
+                    number: issueData.number,
+                    title: issueData.title,
+                    body: issueData.body,
+                    state: issueData.state,
+                    user: {
+                      login: issueData.user.login,
+                      avatarUrl: issueData.user.avatar_url,
+                      url: issueData.user.html_url
+                    },
+                    createdAt: new Date(issueData.created_at),
+                    updatedAt: issueData.updated_at ? new Date(issueData.updated_at) : null,
+                    closedAt: issueData.closed_at ? new Date(issueData.closed_at) : null,
+                    url: issueData.url,
+                    htmlUrl: issueData.html_url,
+                    labels: issueData.labels.map(label => ({
+                      name: label.name,
+                      color: label.color,
+                      description: label.description
+                    })),
+                    assignees: issueData.assignees.map(assignee => ({
+                      login: assignee.login,
+                      avatarUrl: assignee.avatar_url
+                    })),
+                    milestone: issueData.milestone ? {
+                      title: issueData.milestone.title,
+                      description: issueData.milestone.description,
+                      state: issueData.milestone.state,
+                      dueOn: issueData.milestone.due_on ? new Date(issueData.milestone.due_on) : null
+                    } : null,
+                    comments: issueData.comments || 0
+                  },
+                  { upsert: true, new: true }
+                );
+              }
+              console.log(`  ✅ Saved ${actualIssues.length} issues`);
+
+              // Fetch and save releases (changelogs)
+              console.log(`  Fetching releases...`);
+              const releases = (await github.getChangelogs(owner, repoName)).slice(0, 10);
+              console.log(`  Found ${releases.length} releases`);
+
+              for (const releaseData of releases) {
+                await Release.findOneAndUpdate(
+                  { repositoryId: savedRepo._id, releaseId: releaseData.id },
+                  {
+                    releaseId: releaseData.id,
+                    repositoryId: savedRepo._id,
+                    tagName: releaseData.tag_name,
+                    name: releaseData.name,
+                    body: releaseData.body,
+                    draft: releaseData.draft,
+                    prerelease: releaseData.prerelease,
+                    createdAt: new Date(releaseData.created_at),
+                    publishedAt: releaseData.published_at ? new Date(releaseData.published_at) : null,
+                    author: {
+                      login: releaseData.author?.login,
+                      avatarUrl: releaseData.author?.avatar_url,
+                      url: releaseData.author?.html_url
+                    },
+                    url: releaseData.url,
+                    htmlUrl: releaseData.html_url,
+                    tarballUrl: releaseData.tarball_url,
+                    zipballUrl: releaseData.zipball_url,
+                    assets: releaseData.assets.map(asset => ({
+                      name: asset.name,
+                      label: asset.label,
+                      contentType: asset.content_type,
+                      size: asset.size,
+                      downloadCount: asset.download_count,
+                      browserDownloadUrl: asset.browser_download_url
+                    }))
+                  },
+                  { upsert: true, new: true }
+                );
+              }
+              console.log(`  ✅ Saved ${releases.length} releases`);
+
+              // Update repository stats
+              savedRepo.stats = {
+                stars: savedRepo.stats.stars,
+                forks: savedRepo.stats.forks,
+                commits: commits.length,
+                pulls: pulls.length,
+                issues: actualIssues.length
+              };
+              await savedRepo.save();
+              console.log(`  ✅ Updated repository stats for ${savedRepo.fullName}`);
+
+            } catch (dataError) {
+              console.error(`Error fetching data for ${savedRepo.fullName}:`, dataError.message);
+            }
+
           } catch (saveError) {
             console.error(
               `❌ Failed to save repository ${repoData.name}:`,
@@ -554,10 +748,7 @@ exports.syncCurrentIntegration = async (req, res, next) => {
       // Fetch and store commits for this repository
       try {
         console.log(`Fetching commits for ${repository.fullName}...`);
-        const commits = await github.getCommits(
-          userData.login,
-          repository.name
-        );
+        const commits = (await github.getCommits(userData.login, repository.name)).slice(0, 10);
 
         // Save commits to database
         for (const commitData of commits) {
@@ -587,7 +778,7 @@ exports.syncCurrentIntegration = async (req, res, next) => {
         }
 
         // Fetch pull requests
-        const pullRequests = await github.getPullRequests(owner, repoName);
+        const pullRequests = (await github.getPullRequests(userData.login, repository.name)).slice(0, 10);
         console.log("pullRequests ....", pullRequests);
 
         for (const pr of pullRequests) {
@@ -614,7 +805,7 @@ exports.syncCurrentIntegration = async (req, res, next) => {
         } 
 
         // Fetch issues
-        const issues = await github.getIssues(owner, repoName);
+        const issues = (await github.getIssues(userData.login, repository.name)).slice(0, 10);
 
         for (const issue of issues) {
           // Skip pull requests (they're a subset of issues)
@@ -712,7 +903,7 @@ exports.syncCurrentRepository = async (req, res, next) => {
 
       // Fetch and store commits
       console.log(`Fetching commits for ${repository.fullName}...`);
-      const commits = await github.getCommits(owner, repoName);
+      const commits = (await github.getCommits(owner, repoName)).slice(0, 10);
 
       // Save commits to database
       for (const commitData of commits) {
@@ -785,3 +976,62 @@ exports.syncCurrentRepository = async (req, res, next) => {
     next(error);
   }
 };
+
+// Query collection with optional search
+exports.queryCollection = async (req, res) => {
+  try {
+    const { collection } = req.params;
+    const { searchText = "" } = req.query;
+
+    if (!collection) {
+      return res.status(400).json({ success: false, message: "Collection name is required in the URL." });
+    }
+
+    let Model;
+    let query = {};
+    let textFields = [];
+
+    switch (collection) {
+      case "organizations":
+        Model = Organization;
+        textFields = ["name", "description"];
+        break;
+      case "repositories":
+        Model = Repository;
+        textFields = ["name", "description", "fullName"];
+        break;
+      case "commits":
+        Model = Commit;
+        textFields = ["message", "author.name", "author.login"];
+        break;
+      case "pullrequests":
+      case "pulls":
+        Model = PullRequest;
+        textFields = ["title", "body", "user.login"];
+        break;
+      case "issues":
+        Model = Issue;
+        textFields = ["title", "body", "user.login"];
+        break;
+      case "releases":
+      case "changelogs":
+        Model = Release;
+        textFields = ["name", "tagName", "body"];
+        break;
+      default:
+        return res.status(400).json({ success: false, message: `Invalid collection: ${collection}` });
+    }
+
+    if (searchText) {
+      query.$or = textFields.map(field => ({ [field]: { $regex: searchText, $options: "i" } }));
+    }
+
+    const docs = await Model.find(query).limit(100); // limit for safety
+    res.json({ success: true, count: docs.length, data: docs });
+  } catch (err) {
+    console.error("Error in queryCollection:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+module.exports = exports;
